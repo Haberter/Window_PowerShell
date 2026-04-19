@@ -1,0 +1,5 @@
+# 敏感密钥文件
+CC_API_CHECKER/api-keys*.json
+
+# 日志文件
+*.log
