@@ -308,6 +308,20 @@ function PadL([string]$s, [int]$targetWidth) {
     return (" " * $pad) + $s
 }
 
+# ---- Column width calculator ----
+# Reason: ADMIN/KEY 字段长度差异大（1-5 个中文名），固定宽度会截断，动态计算保持对齐
+function GetColWidth {
+    param([array]$Values, [int]$MinWidth, [int]$MaxWidth = 40)
+    $maxW = $MinWidth
+    foreach ($v in $Values) {
+        if ($null -eq $v) { continue }
+        $w = DisplayWidth ([string]$v).Trim()
+        if ($w -gt $maxW) { $maxW = $w }
+    }
+    if ($maxW -gt $MaxWidth) { $maxW = $MaxWidth }
+    return $maxW
+}
+
 # ---- Progress Bar (ASCII) ----
 function Bar {
     param([double]$Used, [double]$Total, [int]$Width = 40, [switch]$Invert)
@@ -674,7 +688,7 @@ function ShowHelp {
     WC "      => 停止后台监控进程" DarkGray
     Write-Host ""
     WC "  注意事项:" Yellow
-    WC "    - 所有 key 每日限额 `$100（含 p4 和 v2 系列）" DarkGray
+    WC "    - 所有 key 每日限额 `$100" DarkGray
     WC "    - 每日限额在 UTC 0:00 重置" DarkGray
     WC "    - 日志文件: switch-key.log（与脚本同目录）" DarkGray
     WC "    - -Interval 不能单独使用，必须配合 -Monitor" DarkGray
@@ -683,9 +697,11 @@ function ShowHelp {
     WC "    - PID 文件: monitor.pid（与脚本同目录），-Stop 读取此文件停止进程" DarkGray
     Write-Host ""
     WC "  当前已配置密钥 ($($API_KEYS.Count) 个):" Yellow
+    $keyW   = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Name }) -MinWidth 14
+    $adminW = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Admin }) -MinWidth 14
     foreach ($k in $API_KEYS) {
         $short = $k.Key.Substring(0, 10) + "..." + $k.Key.Substring($k.Key.Length - 4)
-        WC "    $(PadR $k.Name 14) $(PadR $k.Dept 10) $(PadR $k.Admin 14) $short" DarkGray
+        WC "    $(PadR $k.Name $keyW) $(PadR $k.Dept 10) $(PadR $k.Admin $adminW) $short" DarkGray
     }
     Write-Host ""
 }
@@ -871,7 +887,11 @@ function ShowCurrentKey {
 # ----------------------------------------------------------------
 function ShowStatus {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $totalW = 88
+
+    # Dynamic column widths
+    $keyW   = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Name }) -MinWidth 14
+    $adminW = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Admin }) -MinWidth 14
+    $totalW = $keyW + $adminW + 68
 
     Write-Host ""
     WC ("+$("=" * $totalW)+") Blue
@@ -885,8 +905,8 @@ function ShowStatus {
     # Sort by remaining budget descending
     $sorted = $keyInfos | Where-Object { $null -eq $_.Error -and $_.Active } | Sort-Object -Property Remaining -Descending
 
-    # Column widths: KEY=14  DEPT=10  ADMIN=14  USED=9  LIMIT=6  LEFT=9  BAR=22  PCT=6
-    $hdr = "  $(PadR 'KEY' 14) $(PadR 'DEPT' 10) $(PadR 'ADMIN' 14) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
+    # Column widths: KEY=dynamic  DEPT=10  ADMIN=dynamic  USED=9  LIMIT=6  LEFT=9  BAR=22  PCT=6
+    $hdr = "  $(PadR 'KEY' $keyW) $(PadR 'DEPT' 10) $(PadR 'ADMIN' $adminW) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
     WC $hdr Yellow
     WC ("  " + ("-" * $totalW)) DarkGray
 
@@ -907,7 +927,7 @@ function ShowStatus {
         if ($isCurrent) { $rowColor = "Cyan" }
         $pctStr = ([math]::Round($pct * 100, 1)).ToString() + "%"
 
-        $prefix = "  $(PadR $k.Name 14) $(PadR $k.Dept 10) $(PadR $k.Admin 14) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
+        $prefix = "  $(PadR $k.Name $keyW) $(PadR $k.Dept 10) $(PadR $k.Admin $adminW) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
         WC $prefix $rowColor -NoNewline
         MiniBar -Used $k.DailyUsed -Total $k.DailyLimit -Width 20
         $mark = if ($isCurrent) { " <-- CURRENT" } else { "" }
@@ -917,7 +937,7 @@ function ShowStatus {
     # Summary
     WC ("  " + ("-" * $totalW)) DarkGray
     $grandLeft = [math]::Round($grandLimit - $grandUsed, 2)
-    $summary = "  $(PadR 'TOTAL' 14) $(PadR '' 10) $(PadR '' 14) $(PadL ("`$" + ([math]::Round($grandUsed, 2)).ToString()) 9) $(PadL ("`$" + ([math]::Round($grandLimit, 0)).ToString()) 6) $(PadL ("`$" + $grandLeft.ToString()) 9)"
+    $summary = "  $(PadR 'TOTAL' $keyW) $(PadR '' 10) $(PadR '' $adminW) $(PadL ("`$" + ([math]::Round($grandUsed, 2)).ToString()) 9) $(PadL ("`$" + ([math]::Round($grandLimit, 0)).ToString()) 6) $(PadL ("`$" + $grandLeft.ToString()) 9)"
     WC $summary Cyan
 
     # Show errors
@@ -943,7 +963,11 @@ function ShowStatus {
 # ----------------------------------------------------------------
 function ShowDashboard {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $totalW = 88
+
+    # Dynamic column widths
+    $keyW   = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Name }) -MinWidth 14
+    $adminW = GetColWidth -Values ($API_KEYS | ForEach-Object { $_.Admin }) -MinWidth 14
+    $totalW = $keyW + $adminW + 68
 
     Write-Host ""
     WC ("+$("=" * $totalW)+") Blue
@@ -951,8 +975,8 @@ function ShowDashboard {
     WC ("+$("=" * $totalW)+") Blue
     Write-Host ""
 
-    # Column widths: KEY=14  DEPT=10  ADMIN=14  USED=9  LIMIT=6  LEFT=9  BAR=22  PCT=6
-    $hdr = "  $(PadR 'KEY' 14) $(PadR 'DEPT' 10) $(PadR 'ADMIN' 14) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
+    # Column widths: KEY=dynamic  DEPT=10  ADMIN=dynamic  USED=9  LIMIT=6  LEFT=9  BAR=22  PCT=6
+    $hdr = "  $(PadR 'KEY' $keyW) $(PadR 'DEPT' 10) $(PadR 'ADMIN' $adminW) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
     WC $hdr Yellow
     WC ("  " + ("-" * $totalW)) DarkGray
 
@@ -991,7 +1015,7 @@ function ShowDashboard {
         $entry = $API_KEYS[$i]
 
         if (-not $idResults[$i].Ok -or -not $statsLookup.ContainsKey($i) -or -not $statsLookup[$i].Ok) {
-            $line = "  $(PadR $entry.Name 14) $(PadR $entry.Dept 10) $(PadR $entry.Admin 14) $(PadL 'ERR' 9) $(PadL '-' 6) $(PadL '-' 9)"
+            $line = "  $(PadR $entry.Name $keyW) $(PadR $entry.Dept 10) $(PadR $entry.Admin $adminW) $(PadL 'ERR' 9) $(PadL '-' 6) $(PadL '-' 9)"
             WC $line Red
             continue
         }
@@ -1012,7 +1036,7 @@ function ShowDashboard {
         $rowColor = if ($pct -lt 0.5) { "White" } elseif ($pct -lt 0.8) { "Yellow" } else { "Red" }
         $pctStr = ([math]::Round($pct * 100, 1)).ToString() + "%"
 
-        $prefix = "  $(PadR $entry.Name 14) $(PadR $entry.Dept 10) $(PadR $entry.Admin 14) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
+        $prefix = "  $(PadR $entry.Name $keyW) $(PadR $entry.Dept 10) $(PadR $entry.Admin $adminW) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
         WC $prefix $rowColor -NoNewline
         MiniBar -Used $used -Total $limit -Width 20
         WC " $(PadL $pctStr 6)" $rowColor
@@ -1021,7 +1045,7 @@ function ShowDashboard {
     # Summary
     WC ("  " + ("-" * $totalW)) DarkGray
     $grandLeft = [math]::Round($grandLimit - $grandUsed, 2)
-    $summary = "  $(PadR 'TOTAL' 14) $(PadR '' 10) $(PadR '' 14) $(PadL ("`$" + ([math]::Round($grandUsed, 2)).ToString()) 9) $(PadL ("`$" + ([math]::Round($grandLimit, 0)).ToString()) 6) $(PadL ("`$" + $grandLeft.ToString()) 9)"
+    $summary = "  $(PadR 'TOTAL' $keyW) $(PadR '' 10) $(PadR '' $adminW) $(PadL ("`$" + ([math]::Round($grandUsed, 2)).ToString()) 9) $(PadL ("`$" + ([math]::Round($grandLimit, 0)).ToString()) 6) $(PadL ("`$" + $grandLeft.ToString()) 9)"
     WC $summary Cyan
     Write-Host ""
 }
@@ -1095,10 +1119,13 @@ function CheckAndSwitch {
         # Reason: 切换前打印所有 key 状态，格式对齐 -Status 表格
         Write-Host ""
         WC "  -- 可用 Key 列表 --" Yellow
-        # Column widths: NO=4  KEY=14  DEPT=10  ADMIN=14  USED=9  LIMIT=6  LEFT=9  BAR=22  PCT=6
-        $hdr = "  $(PadR '#' 4) $(PadR 'KEY' 14) $(PadR 'DEPT' 10) $(PadR 'ADMIN' 14) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
+        # Dynamic column widths
+        $keyW   = GetColWidth -Values ($candidates | ForEach-Object { $_.Name }) -MinWidth 14
+        $adminW = GetColWidth -Values ($candidates | ForEach-Object { $_.Admin }) -MinWidth 14
+        $sepW   = $keyW + $adminW + 72
+        $hdr = "  $(PadR '#' 4) $(PadR 'KEY' $keyW) $(PadR 'DEPT' 10) $(PadR 'ADMIN' $adminW) $(PadL 'USED' 9) $(PadL 'LIMIT' 6) $(PadL 'LEFT' 9)  PROGRESS"
         WC $hdr Yellow
-        WC ("  " + ("-" * 96)) DarkGray
+        WC ("  " + ("-" * $sepW)) DarkGray
 
         $idx = 1
         foreach ($c in $candidates) {
@@ -1112,13 +1139,13 @@ function CheckAndSwitch {
             if ($isCurrent) { $color = "Cyan" }
             $mark = if ($isCurrent) { " <-- CURRENT" } else { "" }
 
-            $prefix = "  $(PadR "[$idx]" 4) $(PadR $c.Name 14) $(PadR $c.Dept 10) $(PadR $c.Admin 14) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
+            $prefix = "  $(PadR "[$idx]" 4) $(PadR $c.Name $keyW) $(PadR $c.Dept 10) $(PadR $c.Admin $adminW) $(PadL $usedStr 9) $(PadL $limitStr 6) $(PadL $leftStr 9)  "
             WC $prefix $color -NoNewline
             MiniBar -Used $c.DailyUsed -Total $c.DailyLimit -Width 20
             WC " $(PadL $pctStr 6)$mark" $color
             $idx++
         }
-        WC ("  " + ("-" * 96)) DarkGray
+        WC ("  " + ("-" * $sepW)) DarkGray
 
         Write-Host ""
         WC "  切换方式: A=自动切换余量最多的 key, 输入序号=指定 key" Cyan
